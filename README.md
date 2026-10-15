@@ -9,7 +9,6 @@ This repo is **public** - never put passwords, tokens or other secrets in any fi
 |---|---|---|
 | Casino Google Form Input (`casino-form.user.js`) | Reads the SC balance on casino sites, auto-submits it to the Google Form, and offers a manual form, element picker and API picker. Dormant on sites not in its list. | https://raw.githubusercontent.com/zoytoy/tm-scripts/main/casino-form.user.js |
 | Contest Comment Helper (`contestcomment.user.js`) | On Instagram and Facebook contest posts from listed accounts/pages, finds the most common answer and types it into the comment box. Never clicks Post. | https://raw.githubusercontent.com/zoytoy/tm-scripts/main/contestcomment.user.js |
-
 | Auto Login to Casinos (`auto-login.user.js`) | On a casino's login page, waits for the captcha to be solved, then logs in. Each user chooses per site whether they use Google or email/password. | https://raw.githubusercontent.com/zoytoy/tm-scripts/main/auto-login.user.js |
 
 ## Onboarding a new user
