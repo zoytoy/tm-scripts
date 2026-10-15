@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Contest Comment Helper (Instagram + Facebook)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.0.1
 // @description  "Comment your answer (+ #tag)" contests on Instagram and Facebook (ONLY on posts by accounts/pages listed in POSTERS_IG / POSTERS_FB): reads the comments, finds the most common answer (only among comments using the post's hashtag IF it asks for one), and types it into the comment box. NEVER clicks Post - you review it and post it yourself.
 // @match        https://www.instagram.com/*
 // @match        https://www.facebook.com/*
@@ -29,7 +29,7 @@
   // The script does NOTHING on a post unless its poster is listed here.
   // Instagram: the username (no @). Facebook: the page's URL name (facebook.com/<name>).
   // These two lines are edited by the Tampermonkey menu via GitHub - keep each on one line.
-  const POSTERS_IG = ['play.fame', 'hellomillions.official', 'spinblitz.official', 'mcluck.com.official'];
+  const POSTERS_IG = ['play.fame', 'hellomillions.official', 'spinblitz.official', 'mcluck.com.official', 'americanluckcasino'];
   const POSTERS_FB = ['hellomillions', 'mcluckdotcom', 'spinblitz.official'];
   const norm = p => String(p || '').trim().toLowerCase().replace(/^@/, '');
 
