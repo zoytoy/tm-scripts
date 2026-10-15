@@ -1,87 +1,14 @@
 // ==UserScript==
 // @name         Casino Google Form Input (Reliable + Lightweight)
 // @namespace    http://tampermonkey.net/
-// @version      1.56.1
+// @version      1.56.2
 // @description  Popup form to submit SC data to a Google Form; full per-site detection with centralized helpers; trimmed CSS; reduced polling overhead; consistent auto-submit. Element picker for custom SC selectors, plus an API/network (fetch/XHR/WebSocket) value picker that supports combining two separately-captured values (e.g. redeemable + non-redeemable SC) into one summed total. SC reads now require the value to hold steady for 3 consecutive polls before being used/submitted, so a loading shimmer or stale value on slow sites isn't grabbed early. The Owner name is asked once per computer and stored locally (never overwritten by updates); change it from the Tampermonkey menu.
 // @author       Grok
 // @run-at       document-start
 // @updateURL    https://raw.githubusercontent.com/zoytoy/tm-scripts/main/casino-form.user.js
 // @downloadURL  https://raw.githubusercontent.com/zoytoy/tm-scripts/main/casino-form.user.js
-// @match        https://play.babacasino.com/*
-// @match        https://lobby.chumbacasino.com/*
-// @match        https://play.clubs.poker/*
-// @match        https://play.clubspoker.com/*
-// @match        https://crowncoinscasino.com/*
-// @match        https://www.fortunecoins.com/*
-// @match        https://goldtreasurecasino.com/*
-// @match        https://sixty6.com/*
-// @match        https://crownrips.com/*
-// @match        https://luckylandcasino.com/*
-// @match        https://shuffle.us/*
-// @match        https://play.luckylandcasino.com/*
-// @match        https://albumza.com/*
-// @match        https://luckparty.com/*
-// @match        https://winbonanza.com/*
-// @match        https://fun.high5casino.com/*
-// @match        https://luckybird.io/*
-// @match        https://blitzmania.com/*
-// @match        https://www.cardcrush.com/*
-// @match        https://cashoomo.com/*
-// @match        https://www.jefebet.com/*
-// @match        https://spinquest.com/*
-// @match        https://www.ace.com/*
-// @match        https://modo.us/*
-// @match        https://reelzappy.com/*
-// @match        https://www.coinsbackcasino.com/*
-// @match        https://myprize.us/*
-// @match        https://www.jackpotdaily.com/*
-// @match        https://app.icasino.com/*
-// @match        https://www.rollingriches.com/*
-// @match        https://legacyarcade.com/*
-// @match        https://legacycasino.com/*
-// @match        https://play.rubysweeps.com/*
-// @match        https://sportzino.com/*
-// @match        https://www.vivaro.us/*
-// @match        https://www.yaycasino.com/*
-// @match        https://fortunewins.com/*
-// @match        https://www.wowvegas.com/*
-// @match        https://www.zulacasino.com/*
-// @match        https://sidepot.us/*
-// @match        https://casino.click/*
-// @match        https://play.globalpoker.com/*
-// @match        https://www.goldenheartsgames.com/*
-// @match        https://kickr.com/*
-// @match        https://game.cidercasino.com/*
-// @match        https://www.mojogo.com/*
-// @match        https://www.legendz.com/*
-// @match        https://lonestarcasino.com/*
-// @match        https://www.pulsz.com/*
-// @match        https://www.pulszbingo.com/*
-// @match        https://realprize.com/*
-// @match        https://www.spinpals.com/*
-// @match        https://stake.us/*
-// @match        https://www.themoneyfactory.com/*
-// @match        https://chipnwin.com/*
-// @match        https://www.hellomillions.com/*
-// @match        https://www.jackpota.com/*
-// @match        https://luckyhands.com/*
-// @match        https://www.mcluck.com/*
-// @match        https://www.megabonanza.com/*
-// @match        https://moozi.com/*
-// @match        https://www.spinblitz.com/*
-// @match        https://www.playfame.com/*
-// @match        https://scrooge.casino/*
-// @match        https://market.scrooge.casino/*
-// @match        https://spree.com/*
-// @match        https://crazycoinscasino.com/*
-// @match        https://www.stackrcasino.com/*
-// @match        https://luckystake.com/*
-// @match        https://lunalandcasino.com/*
-// @match        https://americanluck.com/*
-// @match        https://getzoot.us/*
-// @match        https://www.rolla.com/*
-// @match        https://game.jackpotgo.com/*
-// @match        https://game.lavishluck.net/*
+// @match        https://*/*
+// @connect      api.github.com
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
@@ -92,8 +19,165 @@
 (function() {
   'use strict';
 
+  // Casinos this script is active on. Edited by the Tampermonkey menu ("Add this site") via GitHub - keep it on one line.
+  const SITES = ['play.babacasino.com', 'lobby.chumbacasino.com', 'play.clubs.poker', 'play.clubspoker.com', 'crowncoinscasino.com', 'www.fortunecoins.com', 'goldtreasurecasino.com', 'sixty6.com', 'crownrips.com', 'luckylandcasino.com', 'shuffle.us', 'play.luckylandcasino.com', 'albumza.com', 'luckparty.com', 'winbonanza.com', 'fun.high5casino.com', 'luckybird.io', 'blitzmania.com', 'www.cardcrush.com', 'cashoomo.com', 'www.jefebet.com', 'spinquest.com', 'www.ace.com', 'modo.us', 'reelzappy.com', 'www.coinsbackcasino.com', 'myprize.us', 'www.jackpotdaily.com', 'app.icasino.com', 'www.rollingriches.com', 'legacyarcade.com', 'legacycasino.com', 'play.rubysweeps.com', 'sportzino.com', 'www.vivaro.us', 'www.yaycasino.com', 'fortunewins.com', 'www.wowvegas.com', 'www.zulacasino.com', 'sidepot.us', 'casino.click', 'play.globalpoker.com', 'www.goldenheartsgames.com', 'kickr.com', 'game.cidercasino.com', 'www.mojogo.com', 'www.legendz.com', 'lonestarcasino.com', 'www.pulsz.com', 'www.pulszbingo.com', 'realprize.com', 'www.spinpals.com', 'stake.us', 'www.themoneyfactory.com', 'chipnwin.com', 'www.hellomillions.com', 'www.jackpota.com', 'luckyhands.com', 'www.mcluck.com', 'www.megabonanza.com', 'moozi.com', 'www.spinblitz.com', 'www.playfame.com', 'scrooge.casino', 'market.scrooge.casino', 'spree.com', 'crazycoinscasino.com', 'www.stackrcasino.com', 'luckystake.com', 'lunalandcasino.com', 'americanluck.com', 'getzoot.us', 'www.rolla.com', 'game.jackpotgo.com', 'game.lavishluck.net'];
+
+  // ===== SITE LIST (this browser + GitHub) =====
+  // The script is installed on every https page but only does anything on listed casinos
+  // (SITES above, plus any added locally). On other pages it stays dormant: no hooks, no form,
+  // just an "Add this site" menu item - and a small button if a GitHub token is set on this
+  // computer. Adding a site saves it here right away and, with a token, pushes it to the shared
+  // list on GitHub so every installed copy picks it up at its next update check.
+  const HOST = location.hostname.toLowerCase();
+  const IS_TOP = window === window.top;
+  const REPO = 'zoytoy/tm-scripts', REPO_FILE = 'casino-form.user.js', REPO_BRANCH = 'main';
+  const TOKEN_KEY = 'casinoGhToken', LOCAL_SITES_KEY = 'casinoLocalSites';
+  const gv = (k, d) => { try { return GM_getValue(k, d); } catch (e) { return d; } };
+  const sv = (k, v) => { try { GM_setValue(k, v); } catch (e) { /* ignore */ } };
+  const normHost = h => String(h || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[\/?#].*$/, '');
+  const validHost = h => /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(h);
+  const localSites = () => { const r = gv(LOCAL_SITES_KEY, []); return Array.isArray(r) ? r.map(normHost).filter(Boolean) : []; };
+  const LISTED = SITES.includes(HOST) || localSites().includes(HOST);
+  // Once an update that contains a locally-added site is installed, the local copy is redundant - drop it.
+  (function pruneLocalSites() {
+    const all = localSites(), keep = all.filter(h => !SITES.includes(h));
+    if (keep.length !== all.length) sv(LOCAL_SITES_KEY, keep);
+  })();
+
+  function ghReq(method, body) {
+    const token = gv(TOKEN_KEY, '');
+    return new Promise((resolve, reject) => {
+      if (!token) { reject(Object.assign(new Error('No GitHub token set'), { status: 0 })); return; }
+      GM_xmlhttpRequest({
+        method, anonymous: true,
+        url: 'https://api.github.com/repos/' + REPO + '/contents/' + REPO_FILE + (method === 'GET' ? '?ref=' + REPO_BRANCH + '&t=' + Date.now() : ''),
+        headers: { Authorization: 'Bearer ' + token, Accept: 'application/vnd.github+json', 'X-GitHub-Api-Version': '2022-11-28', 'Content-Type': 'application/json' },
+        data: body ? JSON.stringify(body) : undefined,
+        onload: r => {
+          let j = null; try { j = JSON.parse(r.responseText); } catch (e) { /* ignore */ }
+          if (r.status >= 200 && r.status < 300) resolve(j);
+          else reject(Object.assign(new Error('HTTP ' + r.status + (j && j.message ? ': ' + j.message : '')), { status: r.status }));
+        },
+        onerror: r => reject(Object.assign(new Error('Network error' + (r && (r.error || r.statusText) ? ' (' + (r.error || r.statusText) + ')' : '')), { status: -1 })),
+        ontimeout: () => reject(Object.assign(new Error('GitHub timed out'), { status: -1 })),
+        timeout: 20000,
+      });
+    });
+  }
+  const decodeFile = f => decodeURIComponent(escape(atob(String(f.content).replace(/\s/g, '')))).replace(/\r\n/g, '\n');
+  const ghErr = e => e.status === 401 ? 'GitHub rejected the token - ' + e.message + '. (wrong, expired or revoked; use "Set GitHub token" again)'
+    : (e.status === 403 || e.status === 404) ? 'The token has no write access to ' + REPO + ' (needs Contents: Read and write), or ' + REPO_FILE + ' is not in the repo. ' + e.message
+    : e.message;
+
+  // mutate(text) -> { text, summary } or { nochange: 'why' }. Re-reads and retries if someone else pushed in between.
+  async function editRepo(mutate) {
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const f = await ghReq('GET');
+      const res = mutate(decodeFile(f));
+      if (res.nochange) return res;
+      const out = res.text.replace(/(\/\/ @version\s+)(\d+)\.(\d+)\.(\d+)/, (m, a, x, y, z) => a + x + '.' + y + '.' + (+z + 1));
+      const v = (out.match(/\/\/ @version\s+(\S+)/) || [])[1];
+      try {
+        await ghReq('PUT', { message: 'Casino Form v' + v + ': ' + res.summary, content: btoa(unescape(encodeURIComponent(out))), sha: f.sha, branch: REPO_BRANCH });
+        return { version: v, summary: res.summary };
+      } catch (e) { if (e.status === 409 || e.status === 422) continue; throw e; }
+    }
+    throw new Error('GitHub kept changing while saving - try again.');
+  }
+
+  // Edits only the "const SITES = [...]" line of the GitHub copy.
+  const SITES_RE = /^([ \t]*const SITES = )\[([^\]]*)\];/m;
+  const sitesOf = t => {
+    const m = t.match(SITES_RE);
+    if (!m) throw new Error('SITES list not found in the GitHub copy');
+    return (m[2].match(/'([^']*)'/g) || []).map(s => s.slice(1, -1));
+  };
+  const withSites = (t, arr) => t.replace(SITES_RE, (m, a) => a + '[' + arr.map(s => "'" + s + "'").join(', ') + '];');
+  const addSiteMutator = host => t => {
+    const have = sitesOf(t);
+    if (have.includes(host)) return { nochange: 'already on GitHub' };
+    return { text: withSites(t, have.concat(host)), summary: 'add ' + host };
+  };
+  const removeSiteMutator = host => t => {
+    const have = sitesOf(t);
+    if (!have.includes(host)) return { nochange: 'not in the GitHub list' };
+    return { text: withSites(t, have.filter(h => h !== host)), summary: 'remove ' + host };
+  };
+  const doneMsg = res => res.nochange ? 'Nothing to push: ' + res.nochange + '.'
+    : 'Pushed to GitHub as v' + res.version + ' (' + res.summary + ').\nOther computers get it at their next Tampermonkey update check.';
+
+  async function addSite(raw) {
+    const host = normHost(raw);
+    if (!validHost(host)) { alert('"' + raw + '" does not look like a site name.'); return; }
+    if (!SITES.includes(host) && !localSites().includes(host)) sv(LOCAL_SITES_KEY, localSites().concat(host));
+    let msg;
+    if (!gv(TOKEN_KEY, '')) {
+      msg = host + ' added in this browser only (no GitHub token set - menu: "Set GitHub token").';
+    } else {
+      try { msg = host + ' added.\n' + doneMsg(await editRepo(addSiteMutator(host))); }
+      catch (e) { msg = host + ' added in this browser, but the GitHub push FAILED: ' + ghErr(e); }
+    }
+    alert(msg + (host === HOST ? '\n\nThe page will reload so the script can start on it.' : ''));
+    if (host === HOST) location.reload();
+  }
+
+  async function removeSite(raw) {
+    const host = normHost(raw);
+    sv(LOCAL_SITES_KEY, localSites().filter(h => h !== host));
+    if (!SITES.includes(host)) { alert('Removed ' + host + ' from this browser.'); return; }
+    if (!gv(TOKEN_KEY, '')) { alert('Not removed on GitHub (no token set). It stays on the shared list.'); return; }
+    try {
+      const res = await editRepo(removeSiteMutator(host));
+      alert(res.nochange ? 'Nothing to remove: ' + res.nochange + '.' : 'Removed ' + host + ' on GitHub as v' + res.version + '.\nThis browser keeps using it until the update installs.');
+    } catch (e) { alert('GitHub FAILED: ' + ghErr(e)); }
+  }
+
+  function setToken() {
+    const t = prompt('Paste the GitHub token (fine-grained, ' + REPO + ', Contents: Read and write). Blank = remove it:', '');
+    if (t === null) return;
+    if (t.trim() && !/^[A-Za-z0-9_]{20,255}$/.test(t.trim())) { alert('That does not look like a GitHub token (one unbroken word of letters/numbers/underscores, starting github_pat_). Nothing was saved.'); return; }
+    sv(TOKEN_KEY, t.trim());
+    if (!t.trim()) { alert('Token removed from this browser.'); return; }
+    ghReq('GET').then(() => alert('Token works.')).catch(e => alert('Saved, but the test failed: ' + ghErr(e)));
+  }
+
+  // Small "add this site" button, shown only on unlisted pages and only where a token is set (i.e. the admin's computer).
+  function showAddSiteButton() {
+    const mount = () => {
+      if (!document.body || document.getElementById('casino-form-add-site')) return;
+      const box = document.createElement('div');
+      box.id = 'casino-form-add-site';
+      Object.assign(box.style, { position: 'fixed', bottom: '10px', right: '10px', zIndex: '2147483647', display: 'flex', gap: '4px', opacity: '0.85' });
+      const add = document.createElement('button');
+      add.textContent = '➕ Add ' + HOST + ' to Casino Form';
+      Object.assign(add.style, { padding: '6px 10px', background: '#2196F3', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', font: '12px Arial, sans-serif' });
+      add.onclick = () => { add.disabled = true; addSite(HOST).finally(() => { add.disabled = false; }); };
+      const x = document.createElement('button');
+      x.textContent = 'X';
+      Object.assign(x.style, { padding: '6px 8px', background: '#9e9e9e', color: '#fff', border: 'none', borderRadius: '4px', cursor: 'pointer', font: '12px Arial, sans-serif' });
+      x.onclick = () => box.remove();
+      box.appendChild(add); box.appendChild(x);
+      document.body.appendChild(box);
+    };
+    if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', mount); else mount();
+  }
+
+  if (IS_TOP) {
+    try {
+      GM_registerMenuCommand('🔑 Set GitHub token (also tests it)', setToken);
+      if (LISTED) GM_registerMenuCommand('🗑 Remove ' + HOST + ' from Casino Form', () => { if (confirm('Remove ' + HOST + ' from the Casino Form list?')) removeSite(HOST); });
+      else GM_registerMenuCommand('➕ Add ' + HOST + ' to Casino Form', () => addSite(HOST));
+      GM_registerMenuCommand('➕ Add a site by typing…', () => { const t = prompt('Site hostname to add (e.g. www.example.com):', ''); if (t && t.trim()) addSite(t); });
+    } catch (e) { /* menu not available */ }
+    if (!LISTED && gv(TOKEN_KEY, '')) showAddSiteButton();
+  }
+
+  // Not a casino from the list: nothing else to do on this page.
+  if (!LISTED) return;
+  // ===== END SITE LIST =====
+
   // Config
-  const numericRegex = /^\d{1,3}(,\d{3})*(\.\d+)?$/;
+  const numericRegex =/^\d{1,3}(,\d{3})*(\.\d+)?$/;
   const scCurrencyRegexDisplay = /^\$\d{1,3}(,\d{3})*(\.\d{2})$/;
   const noAutoSubmitSites = [
     'crowncoinscasino.com','sportzino.com','fun.high5casino.com',
