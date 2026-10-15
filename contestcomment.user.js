@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Contest Comment Helper (Instagram + Facebook)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.3
+// @version      2.0.4
 // @description  "Comment your answer (+ #tag)" contests on Instagram and Facebook (ONLY on posts by accounts/pages listed in POSTERS_IG / POSTERS_FB): reads the comments, finds the most common answer (only among comments using the post's hashtag IF it asks for one), and types it into the comment box. NEVER clicks Post - you review it and post it yourself.
 // @match        https://www.instagram.com/*
 // @match        https://www.facebook.com/*
@@ -400,19 +400,56 @@
   // ---------- Filling the box (never submits) ----------
   const boxText = b => ('value' in b ? b.value : b.textContent) || '';
 
-  async function fillBox(box, text) {
-    box.focus();
-    if (box.tagName === 'TEXTAREA' || box.tagName === 'INPUT') {
-      const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(box), 'value').set;
-      setter.call(box, text);
-      box.dispatchEvent(new Event('input', { bubbles: true }));
-    } else {
-      document.execCommand('selectAll', false);
-      document.execCommand('insertText', false, text);
+  // Did the text land? The site may re-render the box, so check the original, a freshly found one and the focused element.
+  const landed = (box, text) => {
+    const a = document.activeElement;
+    const focusedEditor = a && (a.isContentEditable || a.tagName === 'TEXTAREA') ? a : null; // never body: it contains the whole page's text
+    return [box, P.findBox(), focusedEditor].some(e => e && boxText(e).includes(text));
+  };
+
+  async function waitLanded(box, text, ms) {
+    const end = Date.now() + ms;
+    while (Date.now() < end) {
+      if (landed(box, text)) return true;
+      await sleep(100);
     }
-    await sleep(400); // the site re-renders the box after input; re-find it before checking
-    const now = P.findBox();
-    return boxText(box).includes(text) || (!!now && boxText(now).includes(text));
+    return landed(box, text);
+  }
+
+  // Focus the box and put the selection inside it (a bare selectAll can select the whole page if focus didn't take).
+  function focusBox(box) {
+    box.focus();
+    if (!box.contains(document.activeElement)) { box.click(); box.focus(); }
+    const sel = window.getSelection(), r = document.createRange();
+    r.selectNodeContents(box);
+    sel.removeAllRanges();
+    sel.addRange(r);
+  }
+
+  async function fillBox(box, text) {
+    if (box.tagName === 'TEXTAREA' || box.tagName === 'INPUT') {
+      box.focus();
+      Object.getOwnPropertyDescriptor(Object.getPrototypeOf(box), 'value').set.call(box, text);
+      box.dispatchEvent(new Event('input', { bubbles: true }));
+      return waitLanded(box, text, 1500);
+    }
+    // Rich-text editors (Facebook's Lexical) differ in what they accept, so try several ways until one sticks.
+    const methods = {
+      execCommand: () => document.execCommand('insertText', false, text),
+      paste: b => {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        b.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      },
+      beforeinput: b => b.dispatchEvent(new InputEvent('beforeinput', { inputType: 'insertText', data: text, bubbles: true, cancelable: true })),
+    };
+    for (const [name, run] of Object.entries(methods)) {
+      const b = box.isConnected ? box : (P.findBox() || box); // the box may have been re-rendered since the scan
+      try { focusBox(b); run(b); } catch (e) { log('fill method failed:', name, e); continue; }
+      if (await waitLanded(b, text, 1500)) { log('typed via', name); return true; }
+      log('fill method had no effect:', name);
+    }
+    return false;
   }
 
   const guardKey = () => 'ch_filled_' + P.key + '_' + P.guardId();
