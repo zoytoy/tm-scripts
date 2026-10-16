@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Contest Comment Helper (Instagram + Facebook)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.5
+// @version      2.0.6
 // @description  "Comment your answer (+ #tag)" contests on Instagram and Facebook (ONLY on posts by accounts/pages listed in POSTERS_IG / POSTERS_FB): reads the comments, finds the most common answer (only among comments using the post's hashtag IF it asks for one), and types it into the comment box. NEVER clicks Post - you review it and post it yourself.
 // @match        https://www.instagram.com/*
 // @match        https://www.facebook.com/*
@@ -456,6 +456,28 @@
   const wasFilled = () => { try { return !!sessionStorage.getItem(guardKey()); } catch (e) { return false; } };
   const markFilled = () => { try { sessionStorage.setItem(guardKey(), '1'); } catch (e) { /* ignore */ } };
 
+  // When the caption doesn't say which hashtag to use, still find the casino's own tag so the comment reads "Answer #Casino":
+  // 1) a caption hashtag matching the page/account name (spinblitz.official -> #SpinBlitz), 2) the caption hashtag commenters
+  // use most, 3) the only hashtag in the caption.
+  function fallbackTag(caps, comments, poster) {
+    const key = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    const pk = key(poster);
+    if (pk.length >= 4) {
+      for (const t of caps.keys()) {
+        const tk = key(t);
+        if (tk.length >= 4 && (pk.includes(tk) || tk.includes(pk))) return { tag: t, from: 'matches page name' };
+      }
+    }
+    let crowd = '', best = 0;
+    for (const t of caps.keys()) {
+      const n = comments.filter(c => c.tags.includes(t)).length;
+      if (n > best) { best = n; crowd = t; }
+    }
+    if (crowd) return { tag: crowd, from: 'most used by commenters' };
+    if (caps.size === 1) return { tag: [...caps.keys()][0], from: 'only caption hashtag' };
+    return null;
+  }
+
   // ---------- Scan ----------
   let busy = false;
 
@@ -491,7 +513,14 @@
           res.note = 'Commenters mostly used ' + (caps.get(crowdTag) || crowdTag) + ' - the post asks for ' + (caps.get(reqTag) || reqTag) + '.';
         }
       }
-      res.tag = reqTag ? (caps.get(reqTag) || reqTag) : '';
+      // The comment we type is always "Answer #Casino". If the caption didn't name a hashtag, still find the casino's own tag.
+      let outTag = reqTag;
+      if (!outTag) {
+        const fb = fallbackTag(caps, comments, P.posterName());
+        if (fb) { outTag = fb.tag; res.tagFrom = fb.from; }
+        else res.note = 'No casino hashtag found in the caption - typed without one.';
+      }
+      res.tag = outTag ? (caps.get(outTag) || outTag) : '';
 
       const pool = reqTag ? comments.filter(c => c.tags.includes(reqTag) && c.answer) : comments.filter(c => c.answer);
       res.tagged = pool.length;
@@ -499,7 +528,7 @@
       for (const c of pool) {
         const grp = groups.get(c.answer) || { count: 0, raws: new Map() };
         grp.count++;
-        const raw = reqTag ? c.text : (stripTags(c.text) || c.text);
+        const raw = stripTags(c.text) || c.text; // the answer itself; the tag is added back below in a fixed position
         grp.raws.set(raw, (grp.raws.get(raw) || 0) + 1);
         groups.set(c.answer, grp);
       }
@@ -509,8 +538,8 @@
 
       const [, top] = sorted[0];
       const tie = sorted[1] && sorted[1][1].count === top.count;
-      const hasCap = s => (res.tag && s.includes(res.tag) ? 1 : 0);
-      res.pick = [...top.raws.entries()].sort((a, b) => (hasCap(b[0]) - hasCap(a[0])) || (b[1] - a[1]))[0][0];
+      const answer = [...top.raws.entries()].sort((a, b) => b[1] - a[1])[0][0]; // most common wording of the winning answer
+      res.pick = res.tag ? answer + ' ' + res.tag : answer;                     // "Response #Casino"
 
       const fillIt = opts.fill ?? AUTO_FILL;
       if (!fillIt) { res.status = 'Scan only (fill off).'; return res; }
