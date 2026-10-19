@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Casino Google Form Input (Reliable + Lightweight)
 // @namespace    http://tampermonkey.net/
-// @version      1.56.2
+// @version      1.56.3
 // @description  Popup form to submit SC data to a Google Form; full per-site detection with centralized helpers; trimmed CSS; reduced polling overhead; consistent auto-submit. Element picker for custom SC selectors, plus an API/network (fetch/XHR/WebSocket) value picker that supports combining two separately-captured values (e.g. redeemable + non-redeemable SC) into one summed total. SC reads now require the value to hold steady for 3 consecutive polls before being used/submitted, so a loading shimmer or stale value on slow sites isn't grabbed early. The Owner name is asked once per computer and stored locally (never overwritten by updates); change it from the Tampermonkey menu.
 // @author       Grok
 // @run-at       document-start
@@ -181,7 +181,7 @@
   const scCurrencyRegexDisplay = /^\$\d{1,3}(,\d{3})*(\.\d{2})$/;
   const noAutoSubmitSites = [
     'crowncoinscasino.com','sportzino.com','fun.high5casino.com',
-    'goldtreasurecasino.com','luckystake.com','app.icasino.com','www.yaycasino.com','www.zulacasino.com'
+    'goldtreasurecasino.com','luckystake.com','app.icasino.com'
   ];
   const extraDelays = { 'www.zulacasino.com': 5000 };
 
@@ -643,12 +643,9 @@
         },
         'sportzino.com': { selector: 'span', textFilter: numericRegex },
         'www.wowvegas.com': { selector: 'div.flex-none', textFilter: numericRegex, processValue: cleanNumber },
-        'www.yaycasino.com': {
-          selector: 'div.FCButtonItem.active button.FCButtonText div.textDecimals span',
-          textFilter: numericRegex,
-          scCheck: (element) => !!element.closest('button.FCButtonText')?.querySelector('img[alt="SC"]')
-        },
-        'www.zulacasino.com': { selector: 'button.FCButtonText div.textDecimals > span', textFilter: numericRegex },
+        // Yay/Zula show GC and SC side by side; pick the SC button directly so the result doesn't depend on which currency tab is active.
+        'www.yaycasino.com': { selector: 'button.FCButtonText:has(img[alt="SC"]) div.textDecimals span', textFilter: numericRegex },
+        'www.zulacasino.com': { selector: 'button.FCButtonText:has(img[alt="SC"]) div.textDecimals span', textFilter: numericRegex },
         'sidepot.us': { selector: 'span.chakra-text.css-1kwzn99', textFilter: numericRegex },
         'www.rolla.com': { selector: 'span.select-none.text-neutral-300', textFilter: numericRegex },
         'scrooge.casino': {
