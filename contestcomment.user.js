@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Contest Comment Helper (Instagram + Facebook)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.9
+// @version      2.0.10
 // @description  "Comment your answer (+ #tag)" contests on Instagram and Facebook (ONLY on posts by accounts/pages listed in POSTERS_IG / POSTERS_FB): reads the comments, finds the most common answer (only among comments using the post's hashtag IF it asks for one), and types it into the comment box. NEVER clicks Post - you review it and post it yourself.
 // @match        https://www.instagram.com/*
 // @match        https://www.facebook.com/*
@@ -24,6 +24,9 @@
   const AUTO_FILL = true;       // type the winning answer into the box (it never posts)
   const START_DELAY_MS = 2500;  // wait after the post opens before scanning
   const MIN_VOTES = 3;          // auto-fill only if at least this many comments agree
+  const AUTO_REFRESH = true;    // if there aren't enough answers yet, reload the post and scan again until there are
+  const REFRESH_SECONDS = 30;   // wait this long between reloads
+  const MAX_REFRESHES = 20;     // give up after this many reloads (about 10 minutes)
   const TAG_OVERRIDE = '';      // e.g. '#playfame' to force the required hashtag
   const LOG = '[Contest]';
   // The script does NOTHING on a post unless its poster is listed here.
@@ -489,7 +492,7 @@
       const box = await waitFor(P.findBox, 10000);
       if (!box) { res.status = 'No comment box found.'; return res; }
       const g = await P.gather(box);
-      if (g.error) { res.status = g.error; return res; }
+      if (g.error) { res.status = g.error; res.retry = true; return res; }
       const { comments, caps } = g;
       res.total = comments.length;
 
@@ -507,6 +510,7 @@
         if (!reqTag) { reqTag = crowdTag; res.tagFrom = 'most used by commenters'; }
         if (!reqTag) {
           res.status = caps.size ? 'No comment uses a caption hashtag yet.' : 'No hashtag found in the caption.';
+          res.retry = !!caps.size;
           return res;
         }
         if (asked.length && crowdTag && crowdTag !== reqTag) {
@@ -522,29 +526,34 @@
       }
       res.tag = outTag ? (caps.get(outTag) || outTag) : '';
 
-      const pool = reqTag ? comments.filter(c => c.tags.includes(reqTag) && c.answer) : comments.filter(c => c.answer);
-      res.tagged = pool.length;
+      // Every comment with an answer counts as a vote - the hashtag is NOT required. Comments carrying it are preferred:
+      // they win ties between answers with the same number of votes.
+      const pool = comments.filter(c => c.answer);
+      const hasTag = c => !!outTag && c.tags.includes(outTag);
+      res.tagged = pool.filter(hasTag).length;
+      res.counted = pool.length;
       const groups = new Map();
       for (const c of pool) {
-        const grp = groups.get(c.answer) || { count: 0, raws: new Map() };
+        const grp = groups.get(c.answer) || { count: 0, tagged: 0, raws: new Map() };
         grp.count++;
+        if (hasTag(c)) grp.tagged++;
         const raw = stripTags(c.text) || c.text; // the answer itself; the tag is added back below in a fixed position
         grp.raws.set(raw, (grp.raws.get(raw) || 0) + 1);
         groups.set(c.answer, grp);
       }
-      const sorted = [...groups.entries()].sort((a, b) => b[1].count - a[1].count);
+      const sorted = [...groups.entries()].sort((a, b) => (b[1].count - a[1].count) || (b[1].tagged - a[1].tagged));
       res.tally = sorted.slice(0, 6).map(([ans, grp]) => [ans, grp.count]);
-      if (!sorted.length) { res.status = reqTag ? 'No comment uses ' + res.tag + ' yet.' : 'No answers yet.'; return res; }
+      if (!sorted.length) { res.status = 'No answers yet.'; res.retry = true; return res; }
 
       const [, top] = sorted[0];
-      const tie = sorted[1] && sorted[1][1].count === top.count;
+      const tie = sorted[1] && sorted[1][1].count === top.count && sorted[1][1].tagged === top.tagged;
       const answer = [...top.raws.entries()].sort((a, b) => b[1] - a[1])[0][0]; // most common wording of the winning answer
       res.pick = res.tag ? answer + ' ' + res.tag : answer;                     // "Response #Casino"
 
       const fillIt = opts.fill ?? AUTO_FILL;
       if (!fillIt) { res.status = 'Scan only (fill off).'; return res; }
       if (!opts.force) {
-        if (top.count < MIN_VOTES) { res.status = 'Only ' + top.count + ' vote(s) so far - not filled.'; return res; }
+        if (top.count < MIN_VOTES) { res.status = 'Only ' + top.count + ' vote(s) so far - not filled.'; res.retry = true; return res; }
         if (wasFilled()) { res.status = 'Already filled once for this post.'; return res; }
       }
       if (boxText(box).trim()) { res.status = 'Comment box already has text - left alone.'; return res; }
@@ -587,17 +596,29 @@
     b.appendChild(head);
 
     if (res.tag || (res.total && !P.crowdFallback)) {
-      b.appendChild(el('div', 'Tag: ' + (res.tag ? res.tag + ' (' + res.tagFrom + ')' : 'none required') + ' · ' + res.tagged + ' of ' + res.total + ' comments'));
+      b.appendChild(el('div', 'Tag: ' + (res.tag ? res.tag + ' (' + res.tagFrom + ')' : 'none required') + ' · ' + res.tagged + ' tagged, ' + res.counted + ' answers of ' + res.total + ' comments'));
     }
     if (res.note) b.appendChild(el('div', res.note, 'margin-top:4px;color:#f0c36d'));
     if (res.tally.length) b.appendChild(el('div', 'Votes: ' + res.tally.map(([a, n]) => (a || '?').toUpperCase() + ' ' + n).join(' · ')));
     if (res.pick) b.appendChild(el('div', 'Pick: ' + res.pick, 'margin-top:4px;font-weight:600'));
     b.appendChild(el('div', res.status, 'margin-top:4px;color:' + (res.filled ? '#7dd87d' : '#f0c36d')));
 
+    if (res.refresh) {
+      const line = el('div', null, 'margin-top:4px;color:#8ab4f8;display:flex;justify-content:space-between;align-items:center');
+      const txt = el('span', 'Refreshing in ' + res.refresh.left + 's (' + res.refresh.n + '/' + MAX_REFRESHES + ')');
+      txt.id = 'ch-refresh-text';
+      const stop = el('span', 'Stop', 'cursor:pointer;text-decoration:underline');
+      stop.onclick = () => { stopRefresh(true); txt.textContent = 'Auto-refresh stopped.'; stop.remove(); };
+      line.appendChild(txt); line.appendChild(stop);
+      b.appendChild(line);
+    } else if (res.refreshNote) {
+      b.appendChild(el('div', res.refreshNote, 'margin-top:4px;color:#8ab4f8'));
+    }
+
     const row = el('div', null, 'display:flex;gap:6px;margin-top:8px');
     const btn = (label, fn) => {
       const e = el('button', label, 'flex:1;padding:4px 6px;border:0;border-radius:6px;background:#3b3b46;color:#fff;cursor:pointer;font:inherit');
-      e.onclick = async () => { e.disabled = true; render(await fn()); };
+      e.onclick = async () => { e.disabled = true; stopRefresh(false); render(await fn()); }; // you're driving now: pause the auto-refresh
       return e;
     };
     row.appendChild(btn('Rescan', () => scan({ fill: false })));
@@ -621,7 +642,57 @@
     if (!poster || !isAllowed(poster)) { log('skipped - ' + P.noun + ' not in list:', poster || '(unknown)'); return; }
     const res = await scan();
     log(res);
-    if (P.navKey() === lastPath) render(res);
+    if (P.navKey() !== lastPath) return;
+    planRefresh(res);
+    render(res);
+    if (res.refresh) startRefreshTimer(lastPath);
+  }
+
+  // ---------- Auto-refresh: reload the post until enough answers are in ----------
+  // Instagram/Facebook only show the comments that existed when the post loaded, so an in-page rescan can't see new
+  // ones. When the scan finds too few answers, reload the post every REFRESH_SECONDS and scan again, up to MAX_REFRESHES.
+  // The count lives in sessionStorage (per tab + post) so it survives the reload; "Stop" or any button click pauses it.
+  let refreshTimer = null;
+  const refreshKey = () => 'ch_refresh_' + P.key + '_' + P.guardId();
+  const readRefresh = () => {
+    try {
+      const r = JSON.parse(sessionStorage.getItem(refreshKey()) || 'null');
+      if (r && Date.now() - r.t < 20 * 60 * 1000) return r; // a stale record from an earlier visit doesn't count
+    } catch (e) { /* ignore */ }
+    return { n: 0, t: Date.now(), stopped: false };
+  };
+  const writeRefresh = r => { try { sessionStorage.setItem(refreshKey(), JSON.stringify(r)); } catch (e) { /* ignore */ } };
+
+  function stopRefresh(remember) {
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
+    if (remember) { const r = readRefresh(); r.stopped = true; writeRefresh(r); }
+  }
+
+  // Decide whether this result gets another reload, and tell the badge.
+  function planRefresh(res) {
+    if (res.filled || !res.retry || !AUTO_REFRESH) { try { sessionStorage.removeItem(refreshKey()); } catch (e) { /* ignore */ } return; }
+    const r = readRefresh();
+    if (r.stopped) { res.refreshNote = 'Auto-refresh stopped.'; return; }
+    if (r.n >= MAX_REFRESHES) { res.refreshNote = 'Gave up after ' + MAX_REFRESHES + ' refreshes. Use Rescan or Fill now.'; return; }
+    res.refresh = { n: r.n + 1, left: REFRESH_SECONDS };
+  }
+
+  function startRefreshTimer(path) {
+    stopRefresh(false);
+    let left = REFRESH_SECONDS;
+    refreshTimer = setInterval(() => {
+      if (P.navKey() !== path) { stopRefresh(false); return; } // moved to another post
+      left--;
+      const t = document.getElementById('ch-refresh-text');
+      if (t) t.textContent = 'Refreshing in ' + left + 's (' + (readRefresh().n + 1) + '/' + MAX_REFRESHES + ')';
+      if (left <= 0) {
+        stopRefresh(false);
+        const r = readRefresh();
+        r.n += 1;
+        writeRefresh(r);
+        location.reload();
+      }
+    }, 1000);
   }
 
   // ---------- Poster list: this browser + GitHub (Tampermonkey menu) ----------
