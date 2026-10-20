@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Contest Comment Helper (Instagram + Facebook)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.10
+// @version      2.0.11
 // @description  "Comment your answer (+ #tag)" contests on Instagram and Facebook (ONLY on posts by accounts/pages listed in POSTERS_IG / POSTERS_FB): reads the comments, finds the most common answer (only among comments using the post's hashtag IF it asks for one), and types it into the comment box. NEVER clicks Post - you review it and post it yourself.
 // @match        https://www.instagram.com/*
 // @match        https://www.facebook.com/*
@@ -11,6 +11,7 @@
 // @grant        GM_setValue
 // @grant        GM_registerMenuCommand
 // @grant        GM_xmlhttpRequest
+// @grant        window.focus
 // @connect      api.github.com
 // @updateURL    https://raw.githubusercontent.com/zoytoy/tm-scripts/main/contestcomment.user.js
 // @downloadURL  https://raw.githubusercontent.com/zoytoy/tm-scripts/main/contestcomment.user.js
@@ -27,6 +28,7 @@
   const AUTO_REFRESH = true;    // if there aren't enough answers yet, reload the post and scan again until there are
   const REFRESH_SECONDS = 30;   // wait this long between reloads
   const MAX_REFRESHES = 20;     // give up after this many reloads (about 10 minutes)
+  const ACTIVATE_TAB = true;    // bring this tab to the front for each auto-refresh (background tabs load and render comments poorly)
   const TAG_OVERRIDE = '';      // e.g. '#playfame' to force the required hashtag
   const LOG = '[Contest]';
   // The script does NOTHING on a post unless its poster is listed here.
@@ -640,6 +642,7 @@
     const poster = await waitFor(P.posterName, 10000);
     if (P.navKey() !== lastPath) return;
     if (!poster || !isAllowed(poster)) { log('skipped - ' + P.noun + ' not in list:', poster || '(unknown)'); return; }
+    if (readRefresh().n > 0) bringToFront(); // this load came from an auto-refresh: scan with the tab in front
     const res = await scan();
     log(res);
     if (P.navKey() !== lastPath) return;
@@ -662,6 +665,12 @@
     return { n: 0, t: Date.now(), stopped: false };
   };
   const writeRefresh = r => { try { sessionStorage.setItem(refreshKey(), JSON.stringify(r)); } catch (e) { /* ignore */ } };
+
+  // Needs the "@grant window.focus" line in the header - Tampermonkey then lets window.focus() switch to this tab.
+  function bringToFront() {
+    if (!ACTIVATE_TAB) return;
+    try { window.focus(); } catch (e) { /* ignore */ }
+  }
 
   function stopRefresh(remember) {
     if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = null; }
@@ -690,6 +699,7 @@
         const r = readRefresh();
         r.n += 1;
         writeRefresh(r);
+        bringToFront(); // reload in the foreground so the page renders and loads comments properly
         location.reload();
       }
     }, 1000);
