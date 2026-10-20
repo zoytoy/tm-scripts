@@ -11,7 +11,7 @@
 // @grant       GM_registerMenuCommand
 // @grant       GM_xmlhttpRequest
 // @noframes
-// @version     4.0.1
+// @version     4.0.2
 // @description Waits for captcha to solve, then auto-logs in to each casino using the method (Google, or email/password) each user chooses per site. The choice is asked once per site and stored on that computer, never overwritten by updates. The list of sites is shared through GitHub.
 // ==/UserScript==
 (function() {
@@ -21,7 +21,7 @@
     // Domains this script is active on. Edited by the Tampermonkey menu ("Add this site")
     // via GitHub - keep it on one line. The script is installed on every https page but does
     // nothing on a domain that isn't listed here (or added locally).
-    const SITES = ['sportzino.com', 'zulacasino.com', 'fortunecoins.com', 'yaycasino.com', 'americanluck.com', 'winbonanza.com', 'fortunewins.com', 'reelzappy.com', 'luckparty.com', 'lonestarcasino.com', 'realprize.com'];
+    const SITES = ['sportzino.com', 'zulacasino.com', 'fortunecoins.com', 'yaycasino.com', 'americanluck.com', 'winbonanza.com', 'fortunewins.com', 'luckparty.com', 'lonestarcasino.com', 'realprize.com'];
 
     const HOST = location.hostname.toLowerCase();
     const REPO = 'zoytoy/tm-scripts', REPO_FILE = 'auto-login.user.js', REPO_BRANCH = 'main';
