@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Contest Comment Helper (Instagram + Facebook)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.12
+// @version      2.0.13
 // @description  "Comment your answer (+ #tag)" contests on Instagram and Facebook (ONLY on posts by accounts/pages listed in POSTERS_IG / POSTERS_FB): reads the comments, finds the most common answer (only among comments using the post's hashtag IF it asks for one), and types it into the comment box. NEVER clicks Post - you review it and post it yourself.
 // @match        https://www.instagram.com/*
 // @match        https://www.facebook.com/*
@@ -25,6 +25,7 @@
   const AUTO_FILL = true;       // type the winning answer into the box (it never posts)
   const START_DELAY_MS = 2500;  // wait after the post opens before scanning
   const MIN_VOTES = 3;          // auto-fill only if at least this many comments agree
+  const TAG_WEIGHT = 15;        // a comment that uses the post's hashtag counts this many votes (an untagged one counts 1)
   const AUTO_REFRESH = true;    // if there aren't enough answers yet, reload the post and scan again until there are
   const REFRESH_SECONDS = 30;   // wait this long between reloads
   const MAX_REFRESHES = 20;     // give up after this many reloads (about 10 minutes)
@@ -169,13 +170,26 @@
     function captionText(root, rows) {
       const link = [...root.querySelectorAll('a[href^="/explore/tags/"]')]
         .find(a => !rows.some(r => r.contains(a)) && a.textContent.trim().startsWith('#'));
-      if (!link) return '';
+      if (!link) return captionTextByCue(root, rows);
       let node = link.parentElement;
       while (node && node !== root) {
         if (rows.some(r => node.contains(r)) || node.querySelector('textarea, [contenteditable="true"], form')) return '';
         const t = node.innerText || node.textContent || '';
         if (t.replace(TAG_RE, '').trim().length >= 20) return t;
         node = node.parentElement;
+      }
+      return '';
+    }
+
+    // Captions with no hashtag link ("Comment your answer + HelloMillions"): find the caption by its instruction wording.
+    function captionTextByCue(root, rows) {
+      const w = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = w.nextNode(); n; n = w.nextNode()) {
+        const el = n.parentElement;
+        if (!el || el.closest('script, style, textarea, form, [contenteditable="true"]') || rows.some(r => r.contains(el))) continue;
+        if (!/\bcomment\b/i.test(n.nodeValue)) continue;
+        const t = el.innerText || el.textContent || '';
+        if (t.trim().length >= 20) return t;
       }
       return '';
     }
@@ -463,15 +477,29 @@
 
   // When the caption doesn't say which hashtag to use, still find the casino's own tag so the comment reads "Answer #Casino":
   // 1) a caption hashtag matching the page/account name (spinblitz.official -> #SpinBlitz), 2) the caption hashtag commenters
-  // use most, 3) the only hashtag in the caption.
+  // use most, 3) the only hashtag in the caption, 4) when the caption has no hashtag at all, the casino tag the commenters
+  // use (a hashtag matching the page name, else one used by a good share of the comments). Comment-only tags are added to caps.
   function fallbackTag(caps, comments, poster) {
     const key = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
     const pk = key(poster);
+    const seen = new Map(); // lowercase tag -> { n: comments using it, forms: Map(display form -> count) }
+    for (const c of comments) {
+      for (const f of new Set(c.text.match(TAG_RE) || [])) {
+        const lc = f.toLowerCase(), e = seen.get(lc) || { n: 0, forms: new Map() };
+        e.n++;
+        e.forms.set(f, (e.forms.get(f) || 0) + 1);
+        seen.set(lc, e);
+      }
+    }
+    const addSeen = lc => { if (!caps.has(lc)) caps.set(lc, [...seen.get(lc).forms.entries()].sort((a, b) => b[1] - a[1])[0][0]); return lc; };
     if (pk.length >= 4) {
       for (const t of caps.keys()) {
         const tk = key(t);
         if (tk.length >= 4 && (pk.includes(tk) || tk.includes(pk))) return { tag: t, from: 'matches page name' };
       }
+      const named = [...seen.keys()].filter(t => { const tk = key(t); return tk.length >= 4 && (pk.includes(tk) || tk.includes(pk)); })
+        .sort((a, b) => seen.get(b).n - seen.get(a).n)[0];
+      if (named) return { tag: addSeen(named), from: 'matches page name (used in comments)' };
     }
     let crowd = '', best = 0;
     for (const t of caps.keys()) {
@@ -480,6 +508,8 @@
     }
     if (crowd) return { tag: crowd, from: 'most used by commenters' };
     if (caps.size === 1) return { tag: [...caps.keys()][0], from: 'only caption hashtag' };
+    const top = [...seen.entries()].sort((a, b) => b[1].n - a[1].n)[0];
+    if (top && top[1].n >= 3 && top[1].n * 4 >= comments.length) return { tag: addSeen(top[0]), from: 'most used in comments' };
     return null;
   }
 
@@ -501,7 +531,10 @@
       const useCount = t => comments.filter(c => c.tags.includes(t)).length;
       let reqTag = TAG_OVERRIDE.toLowerCase();
       // 1) the hashtag the caption's instruction names ("...comments + #PlayFame")
-      const asked = reqTag ? [] : instructionTags(g.text, caps);
+      // A caption can name the tag without a # ("Comment your answer + HelloMillions") - treat "+ Word" as that hashtag.
+      const instrText = g.text.replace(/\+\s*(?=\p{L})/gu, '+ #');
+      if (!reqTag) for (const m of g.text.matchAll(/\+\s*(\p{L}[\p{L}\p{N}_]*)/gu)) if (!caps.has('#' + m[1].toLowerCase())) caps.set('#' + m[1].toLowerCase(), '#' + m[1]);
+      const asked = reqTag ? [] : instructionTags(instrText, caps);
       if (!reqTag && asked.length) reqTag = asked.slice().sort((a, b) => useCount(b) - useCount(a))[0];
       res.tagFrom = !reqTag ? 'none required' : TAG_OVERRIDE ? 'override' : 'caption instruction';
 
@@ -510,9 +543,9 @@
         let crowdTag = '', best = 0;
         for (const t of caps.keys()) { const n = useCount(t); if (n > best) { best = n; crowdTag = t; } }
         if (!reqTag) { reqTag = crowdTag; res.tagFrom = 'most used by commenters'; }
-        if (!reqTag) {
-          res.status = caps.size ? 'No comment uses a caption hashtag yet.' : 'No hashtag found in the caption.';
-          res.retry = !!caps.size;
+        if (!reqTag && caps.size) {
+          res.status = 'No comment uses a caption hashtag yet.';
+          res.retry = true;
           return res;
         }
         if (asked.length && crowdTag && crowdTag !== reqTag) {
@@ -528,27 +561,28 @@
       }
       res.tag = outTag ? (caps.get(outTag) || outTag) : '';
 
-      // Every comment with an answer counts as a vote - the hashtag is NOT required. Comments carrying it are preferred:
-      // they win ties between answers with the same number of votes.
+      // Every comment with an answer counts as a vote - the hashtag is NOT required, so posts that don't ask for one still work.
+      // Comments carrying the tag are weighted TAG_WEIGHT times heavier, so they decide the pick whenever there are any.
       const pool = comments.filter(c => c.answer);
       const hasTag = c => !!outTag && c.tags.includes(outTag);
       res.tagged = pool.filter(hasTag).length;
       res.counted = pool.length;
       const groups = new Map();
       for (const c of pool) {
-        const grp = groups.get(c.answer) || { count: 0, tagged: 0, raws: new Map() };
+        const grp = groups.get(c.answer) || { count: 0, tagged: 0, score: 0, raws: new Map() };
         grp.count++;
         if (hasTag(c)) grp.tagged++;
+        grp.score += hasTag(c) ? TAG_WEIGHT : 1;
         const raw = stripTags(c.text) || c.text; // the answer itself; the tag is added back below in a fixed position
         grp.raws.set(raw, (grp.raws.get(raw) || 0) + 1);
         groups.set(c.answer, grp);
       }
-      const sorted = [...groups.entries()].sort((a, b) => (b[1].count - a[1].count) || (b[1].tagged - a[1].tagged));
-      res.tally = sorted.slice(0, 6).map(([ans, grp]) => [ans, grp.count]);
+      const sorted = [...groups.entries()].sort((a, b) => (b[1].score - a[1].score) || (b[1].count - a[1].count));
+      res.tally = sorted.slice(0, 6).map(([ans, grp]) => [ans, grp.tagged ? grp.count + ' (' + grp.tagged + ' tagged)' : grp.count]);
       if (!sorted.length) { res.status = 'No answers yet.'; res.retry = true; return res; }
 
       const [, top] = sorted[0];
-      const tie = sorted[1] && sorted[1][1].count === top.count && sorted[1][1].tagged === top.tagged;
+      const tie = sorted[1] && sorted[1][1].score === top.score;
       const answer = [...top.raws.entries()].sort((a, b) => b[1] - a[1])[0][0]; // most common wording of the winning answer
       res.pick = res.tag ? answer + ' ' + res.tag : answer;                     // "Response #Casino"
 
