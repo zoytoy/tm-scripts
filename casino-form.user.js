@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Casino Google Form Input (Reliable + Lightweight)
 // @namespace    http://tampermonkey.net/
-// @version      1.56.4
+// @version      1.56.5
 // @description  Popup form to submit SC data to a Google Form; full per-site detection with centralized helpers; trimmed CSS; reduced polling overhead; consistent auto-submit. Element picker for custom SC selectors, plus an API/network (fetch/XHR/WebSocket) value picker that supports combining two separately-captured values (e.g. redeemable + non-redeemable SC) into one summed total. SC reads now require the value to hold steady for 3 consecutive polls before being used/submitted, so a loading shimmer or stale value on slow sites isn't grabbed early. The Owner name is asked once per computer and stored locally (never overwritten by updates); change it from the Tampermonkey menu.
 // @author       Grok
 // @run-at       document-start
@@ -180,10 +180,8 @@
   const numericRegex =/^\d{1,3}(,\d{3})*(\.\d+)?$/;
   // \d+ (not \d{1,3}): values are built with toFixed(2) and carry no thousands comma, so "$1234.56" must pass.
   const scCurrencyRegexDisplay = /^\$\d+(\.\d{2})$/;
-  const noAutoSubmitSites = [
-    'crowncoinscasino.com','sportzino.com','fun.high5casino.com',
-    'goldtreasurecasino.com','luckystake.com','app.icasino.com'
-  ];
+  // Hosts to skip auto-submit on. Intentionally empty: every listed site auto-submits.
+  const noAutoSubmitSites = [];
   const extraDelays = { 'www.zulacasino.com': 5000 };
 
   // ===== OWNER (per-computer) =====
