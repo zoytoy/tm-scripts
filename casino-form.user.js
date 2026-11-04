@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Casino Google Form Input (Reliable + Lightweight)
 // @namespace    http://tampermonkey.net/
-// @version      1.56.3
+// @version      1.56.4
 // @description  Popup form to submit SC data to a Google Form; full per-site detection with centralized helpers; trimmed CSS; reduced polling overhead; consistent auto-submit. Element picker for custom SC selectors, plus an API/network (fetch/XHR/WebSocket) value picker that supports combining two separately-captured values (e.g. redeemable + non-redeemable SC) into one summed total. SC reads now require the value to hold steady for 3 consecutive polls before being used/submitted, so a loading shimmer or stale value on slow sites isn't grabbed early. The Owner name is asked once per computer and stored locally (never overwritten by updates); change it from the Tampermonkey menu.
 // @author       Grok
 // @run-at       document-start
@@ -178,7 +178,8 @@
 
   // Config
   const numericRegex =/^\d{1,3}(,\d{3})*(\.\d+)?$/;
-  const scCurrencyRegexDisplay = /^\$\d{1,3}(,\d{3})*(\.\d{2})$/;
+  // \d+ (not \d{1,3}): values are built with toFixed(2) and carry no thousands comma, so "$1234.56" must pass.
+  const scCurrencyRegexDisplay = /^\$\d+(\.\d{2})$/;
   const noAutoSubmitSites = [
     'crowncoinscasino.com','sportzino.com','fun.high5casino.com',
     'goldtreasurecasino.com','luckystake.com','app.icasino.com'
@@ -213,6 +214,103 @@
 
   try { GM_registerMenuCommand('Change Owner name (currently: ' + (GM_getValue(OWNER_KEY, '') || 'not set') + ')', changeOwner); } catch (e) { /* menu not available */ }
   // ===== END OWNER =====
+
+  // ===== SC MODE =====
+  // Some sites only show the balance of the currency that is currently selected (SC or GC) and may
+  // reset to GC on every load (CrownCoins does). For those hosts: isSC() -> true / false / null
+  // (null = header not rendered yet, so touch nothing) and toggle() -> the element that switches
+  // to the other currency. ensureSCMode() clicks it only when the page positively reports GC.
+  const scModeConfigs = {
+    'crowncoinscasino.com': {
+      isSC: () => { const t = document.querySelector('.balance-panel-left'); return t ? /^SC/i.test(t.textContent.trim()) : null; },
+      toggle: () => document.querySelector('[data-testid="coin-switcher"]')
+    },
+    'reelzappy.com': {
+      isSC: () => { const g = document.querySelector('.rz-currency-switch'); return g ? g.classList.contains('rz-currency-switch--sc') : null; },
+      toggle: () => document.querySelector('button.rz-currency-switch__toggle')
+    },
+    'sportzino.com': {
+      isSC: () => { const b = document.querySelector('.balance-switcher'); return b ? !!b.querySelector('.balance-switcher-button-fc.balance-switcher-button-can-grow') : null; },
+      toggle: () => document.querySelector('button.balance-switcher-button-fc')
+    }
+  };
+  let scModeAttempts = 0, lastScModeTry = 0;
+  function ensureSCMode() {
+    const cfg = scModeConfigs[window.location.hostname];
+    if (!cfg || scModeAttempts >= 3 || Date.now() - lastScModeTry < 3000) return;
+    try {
+      if (cfg.isSC() !== false) return; // already SC, or not rendered yet
+      const el = cfg.toggle();
+      if (!el) return;
+      lastScModeTry = Date.now(); scModeAttempts++;
+      el.click();
+    } catch (e) { /* ignore */ }
+  }
+  // ===== END SC MODE =====
+
+  // ===== AUTO-ACCEPT TERMS =====
+  // Casinos periodically block play behind an "we updated our terms - confirm" popup. This accepts
+  // those so the page is usable again. Deliberately narrow: it only acts on a popup whose text says
+  // terms/documents/policy were updated (or asks you to accept/agree to them), that has a plain
+  // Confirm/Accept/Agree/Continue button, and that holds no text/password/other inputs. Cookie
+  // banners and anything mentioning purchases, payments, redeeming, withdrawals or ID verification
+  // are skipped. Works for ~4 minutes after each page load, at most 5 clicks. Turn it off from the
+  // Tampermonkey menu ("Auto-accept terms prompts").
+  const TERMS_KEY = 'autoAcceptTerms';
+  const termsEnabled = () => gv(TERMS_KEY, true) !== false;
+  const TERMS_PROMPT = /(updated|revised|new|changes? to)\b.{0,50}\b(terms|conditions|policy|policies|documents|rules|agreement)|\b(accept|agree|confirm)\b.{0,70}\b(terms|conditions|policy|policies|documents|rules|agreement)|\b(terms|conditions|policy|policies|documents|rules|agreement)\b.{0,70}\b(accept|agree)|action required/i;
+  const TERMS_SKIP = /cookie|purchase|payment|redeem|withdraw|verif|identity|kyc|password/i;
+  const TERMS_BTN = /^(confirm|accept|i accept|i agree|agree|accept\s*(&|and)\s*continue|agree\s*(&|and)\s*continue|continue|ok|okay)$/i;
+  const isShown = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== 'hidden'; };
+
+  function findTermsPrompt() {
+    for (const btn of document.querySelectorAll('button, [role="button"]')) {
+      if (!TERMS_BTN.test(btn.textContent.trim()) || !isShown(btn)) continue;
+      let box = btn.parentElement;
+      for (let i = 0; i < 8 && box && box !== document.body; i++, box = box.parentElement) {
+        const text = box.textContent || '';
+        if (text.length > 2000) break; // grew past a popup into the whole page
+        if (!TERMS_PROMPT.test(text)) continue;
+        if (TERMS_SKIP.test(text) || box.querySelector('input:not([type="checkbox"]):not([type="hidden"]), textarea, select')) break;
+        return { btn, box };
+      }
+    }
+    return null;
+  }
+
+  let termsClicks = 0, lastTermsClick = 0;
+  function tryAcceptTerms() {
+    if (termsClicks >= 5 || Date.now() - lastTermsClick < 4000 || !termsEnabled()) return;
+    const hit = findTermsPrompt();
+    if (!hit) return;
+    const { btn, box } = hit;
+    // Tick the "I have read..." box first if there is one and it is not ticked; that enables the button for the next pass.
+    const cb = box.querySelector('input[type="checkbox"]');
+    if (cb && !cb.checked) { (isShown(cb) ? cb : (cb.closest('label') || cb.parentElement || cb)).click(); return; }
+    const ariaCb = box.querySelector('[role="checkbox"][aria-checked="false"]');
+    if (ariaCb) { ariaCb.click(); return; }
+    if (btn.disabled || btn.getAttribute('aria-disabled') === 'true') return;
+    lastTermsClick = Date.now(); termsClicks++;
+    console.log('[casino-form] auto-accepting terms prompt on ' + HOST + ': "' + box.textContent.trim().replace(/\s+/g, ' ').slice(0, 120) + '"');
+    sv('lastTermsAccept_' + HOST, new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    btn.click();
+  }
+
+  function startTermsAutoAccept() {
+    if (!IS_TOP) return;
+    let ticks = 0;
+    const id = setInterval(() => { tryAcceptTerms(); if (++ticks >= 120) clearInterval(id); }, 2000);
+  }
+
+  if (IS_TOP) {
+    try {
+      GM_registerMenuCommand('Auto-accept terms prompts: ' + (termsEnabled() ? 'ON' : 'OFF') + ' (click to toggle)', () => {
+        sv(TERMS_KEY, !termsEnabled());
+        alert('Auto-accept terms prompts is now ' + (termsEnabled() ? 'ON' : 'OFF') + '. Reload the page for it to take effect.');
+      });
+    } catch (e) { /* menu not available */ }
+  }
+  // ===== END AUTO-ACCEPT TERMS =====
 
   // Helpers
   const cleanNumber = (value) => {
@@ -586,7 +684,8 @@
         'www.mcluck.com': { selector: 'span[data-test="common-header-sc-value"]', textFilter: /SC\s*/i },
         'www.hellomillions.com': { selector: 'span', textFilter: /^SC\s*\d{1,3}(,\d{3})*(\.\d+)?$/i },
         'www.jackpota.com': { selector: 'span', textFilter: /^SC\s*\d{1,3}(,\d{3})*(\.\d+)?$/i },
-        'www.spinblitz.com': { selector: 'span[data-test="sc-balance-value"]', textFilter: /SC\s*/i },
+        // SpinBlitz renamed data-test -> data-testid; keep both.
+        'www.spinblitz.com': { selector: 'span[data-testid="sc-balance-value"], span[data-test="sc-balance-value"]', textFilter: /SC\s*/i },
         'www.megabonanza.com': {
           selector: 'span[class*="currencyValue"]',
           textFilter: numericRegex,
@@ -622,9 +721,10 @@
             return moneyType === 'SC';
           }
         },
+        // CrownCoins: balance is now a span; the panel only reads "SC" when the header toggle is on SC (see scModeConfigs).
         'crowncoinscasino.com': {
-          selector: 'div.balance-panel-balance',
-          scCheck: (el) => /SC/i.test(el.closest('div.balance-panel')?.textContent?.trim() || '')
+          selector: 'div.balance-panel span.balance-panel-live',
+          scCheck: (el) => /^SC/i.test(el.closest('.balance-panel')?.querySelector('.balance-panel-left')?.textContent?.trim() || '')
         },
         'www.fortunecoins.com': {
           selector: 'button.FCButtonText div.textDecimals.desktop > span, button.FCButtonText div.textDecimals > span',
@@ -634,14 +734,24 @@
         'goldtreasurecasino.com': { selector: 'div.MuiBox-root p.MuiTypography-body1 span', textFilter: numericRegex },
         'app.icasino.com': { selector: 'div[data-testid="balance-amount"]', textFilter: numericRegex },
         'luckybird.io': { selector: 'div.usd_color.currency-active span.amount', textFilter: numericRegex, processValue: cleanNumber },
-        'modo.us': { selector: 'button[value="SC"] span', textFilter: numericRegex },
+        // Modo: the old button[value="SC"] is gone; the header pill's aria-label is "Add Sweepstakes Coins".
+        'modo.us': { selector: 'button[data-testid="coin-balance-pill"]', textFilter: numericRegex },
+        // No "SC" text near the balance on Coinsback - just a coin icon in the wallet button.
+        'www.coinsbackcasino.com': { selector: 'button[data-wallet-target] span.tabular-nums', textFilter: numericRegex },
+        // Jackpot Daily: the "cash" switch item is SC, the "coin" item is GC.
+        'www.jackpotdaily.com': { selector: 'div.coin-switch div.switch-item.cash span.text', textFilter: numericRegex },
+        // ReelZappy: only reads as SC when the header toggle is on SC (see scModeConfigs).
+        'reelzappy.com': { selector: 'div.rz-currency-switch--sc span.rz-currency-switch__amount', textFilter: numericRegex },
+        // Shuffle: SC and GC tabs sit side by side; the SC tab is stable via data-testid.
+        'shuffle.us': { selector: 'button[data-testid="SC"] p', textFilter: numericRegex },
         'myprize.us': {
           selector: 'div.active-currency-section span.amount',
           textFilter: numericRegex,
           scCheck: (el) => !!el.closest('div.active-currency-section')?.querySelector('img[alt="SC"]'),
           processValue: cleanNumber
         },
-        'sportzino.com': { selector: 'span', textFilter: numericRegex },
+        // Sportzino: the SC button only renders a number while SC is the selected currency (see scModeConfigs).
+        'sportzino.com': { selector: 'button.balance-switcher-button-fc span.balance-switcher-button-number-placeholder', textFilter: numericRegex },
         'www.wowvegas.com': { selector: 'div.flex-none', textFilter: numericRegex, processValue: cleanNumber },
         // Yay/Zula show GC and SC side by side; pick the SC button directly so the result doesn't depend on which currency tab is active.
         'www.yaycasino.com': { selector: 'button.FCButtonText:has(img[alt="SC"]) div.textDecimals span', textFilter: numericRegex },
@@ -707,7 +817,8 @@
         'www.jefebet.com': { selector: 'div.coin-info', textFilter: /SC\s*\d{1,3}(,\d{3})*(\.\d+)?/i },
         'moozi.com': { selector: 'span.hidden.md\\:block', textFilter: numericRegex },
         'luckyhands.com': { selector: 'div.c2-b.MuiBox-root', textFilter: /SC\s*\d{1,3}(,\d{3})*(\.\d+)?/i },
-        'realprize.com': { selector: 'span.gct', textFilter: numericRegex },
+        // RealPrize redesigned (span.gct is gone); the balance button's text reads "sc50.12".
+        'realprize.com': { selector: 'button[aria-label="Buy Sweepstakes Coin"]', textFilter: /^SC\s*\d{1,3}(,\d{3})*(\.\d+)?$/i },
         'www.spinpals.com': {
           selector: 'p.font-bold',
           textFilter: numericRegex,
@@ -797,6 +908,7 @@
       let lastGood = '';
       let streak = 0;
       const tryFind = () => {
+        ensureSCMode(); // sites that only show the selected currency: switch to SC if needed
         const val = findSCBalance();
         const good = val && val !== '$0.00';
         if (good) {
@@ -1461,6 +1573,7 @@
     if (!document.body) { setTimeout(runScript, 500); return; }
     createTriggerButtons();
     tryAutoSubmit();
+    startTermsAutoAccept();
 
     // Hotkey: Shift+Alt+F to open the casino form
     document.addEventListener('keydown', (e) => {
