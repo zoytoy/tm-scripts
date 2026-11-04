@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Casino Google Form Input (Reliable + Lightweight)
 // @namespace    http://tampermonkey.net/
-// @version      1.56.5
+// @version      1.56.6
 // @description  Popup form to submit SC data to a Google Form; full per-site detection with centralized helpers; trimmed CSS; reduced polling overhead; consistent auto-submit. Element picker for custom SC selectors, plus an API/network (fetch/XHR/WebSocket) value picker that supports combining two separately-captured values (e.g. redeemable + non-redeemable SC) into one summed total. SC reads now require the value to hold steady for 3 consecutive polls before being used/submitted, so a loading shimmer or stale value on slow sites isn't grabbed early. The Owner name is asked once per computer and stored locally (never overwritten by updates); change it from the Tampermonkey menu.
 // @author       Grok
 // @run-at       document-start
@@ -226,6 +226,11 @@
     'reelzappy.com': {
       isSC: () => { const g = document.querySelector('.rz-currency-switch'); return g ? g.classList.contains('rz-currency-switch--sc') : null; },
       toggle: () => document.querySelector('button.rz-currency-switch__toggle')
+    },
+    'realprize.com': {
+      isSC: () => document.querySelector('header button[aria-label="Switch to Gold Coins"]') ? true
+        : document.querySelector('header button[aria-label="Switch to Sweepstakes Coins"]') ? false : null,
+      toggle: () => document.querySelector('header button[aria-label="Switch to Sweepstakes Coins"]')
     },
     'sportzino.com': {
       isSC: () => { const b = document.querySelector('.balance-switcher'); return b ? !!b.querySelector('.balance-switcher-button-fc.balance-switcher-button-can-grow') : null; },
@@ -816,7 +821,8 @@
         'moozi.com': { selector: 'span.hidden.md\\:block', textFilter: numericRegex },
         'luckyhands.com': { selector: 'div.c2-b.MuiBox-root', textFilter: /SC\s*\d{1,3}(,\d{3})*(\.\d+)?/i },
         // RealPrize redesigned (span.gct is gone); the balance button's text reads "sc50.12".
-        'realprize.com': { selector: 'button[aria-label="Buy Sweepstakes Coin"]', textFilter: /^SC\s*\d{1,3}(,\d{3})*(\.\d+)?$/i },
+        // (label is "Buy Sweepstakes Coins"; in GC mode it becomes "Buy Gold Coins", so this only matches in SC mode - see scModeConfigs)
+        'realprize.com': { selector: 'header button[aria-label^="Buy Sweepstakes Coin"]', textFilter: /^SC\s*\d{1,3}(,\d{3})*(\.\d+)?$/i },
         'www.spinpals.com': {
           selector: 'p.font-bold',
           textFilter: numericRegex,
