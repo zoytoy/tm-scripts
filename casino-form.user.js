@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Casino Google Form Input (Reliable + Lightweight)
 // @namespace    http://tampermonkey.net/
-// @version      1.56.6
+// @version      1.56.7
 // @description  Popup form to submit SC data to a Google Form; full per-site detection with centralized helpers; trimmed CSS; reduced polling overhead; consistent auto-submit. Element picker for custom SC selectors, plus an API/network (fetch/XHR/WebSocket) value picker that supports combining two separately-captured values (e.g. redeemable + non-redeemable SC) into one summed total. SC reads now require the value to hold steady for 3 consecutive polls before being used/submitted, so a loading shimmer or stale value on slow sites isn't grabbed early. The Owner name is asked once per computer and stored locally (never overwritten by updates); change it from the Tampermonkey menu.
 // @author       Grok
 // @run-at       document-start
@@ -9,6 +9,7 @@
 // @downloadURL  https://raw.githubusercontent.com/zoytoy/tm-scripts/main/casino-form.user.js
 // @match        https://*/*
 // @connect      api.github.com
+// @connect      docs.google.com
 // @grant        GM_xmlhttpRequest
 // @grant        GM_setValue
 // @grant        GM_getValue
