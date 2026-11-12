@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Contest Comment Helper (Instagram + Facebook)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.14
+// @version      2.0.15
 // @description  "Comment your answer (+ #tag)" contests on Instagram and Facebook (ONLY on posts by accounts/pages listed in POSTERS_IG / POSTERS_FB): reads the comments, finds the most common answer (only among comments using the post's hashtag IF it asks for one), and types it into the comment box. NEVER clicks Post - you review it and post it yourself.
 // @match        https://www.instagram.com/*
 // @match        https://www.facebook.com/*
@@ -278,6 +278,9 @@
 
     const NOISE = new Set(['·', '•', 'Edited', 'Top fan', 'Author', 'Admin', 'Moderator', 'Verified', 'Rising fan', 'Fan', 'Pinned', 'Reply', 'Like', 'Share']);
 
+    // Facebook keeps each timestamp's full date ("Thursday, November 12, 2026 at 2:11 PM") in a hidden element inside the row.
+    const DATE_RE = /^(?:mon|tues|wednes|thurs|fri|satur|sun)day,?\s+\w+\s+\d{1,2},?\s+\d{4}\s+at\s+\d{1,2}:\d{2}\s*[ap]m$/i;
+
     function commentParts(row) {
       const label = row.getAttribute('aria-label') || '';
       const user = label.replace(/^Comment by /, '').replace(/\s+\d+\s+(second|minute|hour|day|week|month|year)s?\s+ago$/i, '').trim();
@@ -293,7 +296,7 @@
       let text = '';
       for (let n = w.nextNode(); n; n = w.nextNode()) {
         const s = n.nodeValue;
-        if (!s || !s.trim() || skip(n) || NOISE.has(s.trim())) continue;
+        if (!s || !s.trim() || skip(n) || NOISE.has(s.trim()) || DATE_RE.test(s.trim())) continue;
         text += (text ? ' ' : '') + s;
       }
       return { user, text: text.replace(/\s+/g, ' ').trim() };
